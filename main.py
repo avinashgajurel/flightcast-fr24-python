@@ -1,3 +1,8 @@
+
+import inspect
+import importlib.metadata
+from pathlib import Path
+import FlightRadarAPI as fr24_package
 import os
 import time
 from fastapi import FastAPI, Header, HTTPException
@@ -83,4 +88,64 @@ def get_flights(
         raise HTTPException(
             status_code=502,
             detail=f"Flight data request failed: {str(error)}"
+        )
+
+@app.get("/diagnostics")
+def diagnostics(x_flightcast_token: str = Header(default="")):
+    if not ACCESS_TOKEN or x_flightcast_token != ACCESS_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorised")
+
+    try:
+        version = importlib.metadata.version("FlightRadarAPI")
+        package_path = Path(fr24_package.__file__).parent
+
+        methods = {}
+        for name, method in inspect.getmembers(
+            FlightRadar24API, predicate=inspect.isfunction
+        ):
+            try:
+                methods[name] = str(inspect.signature(method))
+            except Exception:
+                methods[name] = "Signature unavailable"
+
+        keywords = (
+            "takeoff", "take_off", "landed", "landing",
+            "runway", "datetime", "destination_airport",
+            "origin_airport", "flight_details"
+        )
+
+        matches = []
+        for source_file in package_path.rglob("*.py"):
+            try:
+                for line_number, line in enumerate(
+                    source_file.read_text(
+                        encoding="utf-8", errors="ignore"
+                    ).splitlines(), start=1
+                ):
+                    if any(word in line.lower() for word in keywords):
+                        matches.append({
+                            "file": source_file.name,
+                            "line": line_number,
+                            "code": line.strip()[:250]
+                        })
+                        if len(matches) >= 100:
+                            break
+            except Exception:
+                continue
+
+            if len(matches) >= 100:
+                break
+
+        return {
+            "status": "diagnostics completed",
+            "library": "FlightRadarAPI",
+            "version": version,
+            "available_methods": methods,
+            "matching_source_lines": matches
+        }
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Diagnostics failed: {str(error)}"
         )
